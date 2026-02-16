@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/orayew2002/rast-excel/domain"
 	"github.com/orayew2002/rast-excel/processor"
 	"github.com/orayew2002/rast-excel/template"
 )
@@ -16,6 +17,10 @@ func main() {
 
 	registry := template.New()
 	template.RegisterDefaults(registry)
+
+	// For testing: use fake employees. In your real project, pass your own []domain.Employee.
+	employees := domain.GenerateEmployees(25)
+	template.RegisterEmployeeHandler(registry, employees)
 
 	p := processor.New(registry)
 	if _, err := p.ProcessFile(*input, *output); err != nil {

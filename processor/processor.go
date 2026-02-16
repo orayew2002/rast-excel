@@ -34,16 +34,18 @@ func (p *Processor) ProcessFile(input, output string) ([]byte, error) {
 		}
 	}
 
-	if err := f.SaveAs(output); err != nil {
-		return nil, fmt.Errorf("save %s: %w", output, err)
-	}
-
 	buf, err := f.WriteToBuffer()
 	if err != nil {
 		return nil, fmt.Errorf("write to buffer: %w", err)
 	}
 
-	return buf.Bytes(), nil
+	data := buf.Bytes()
+
+	if err := f.SaveAs(output); err != nil {
+		return nil, fmt.Errorf("save %s: %w", output, err)
+	}
+
+	return data, nil
 }
 
 // ProcessBytes reads an Excel file from raw bytes, processes all sheets,
