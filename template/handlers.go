@@ -14,6 +14,11 @@ import (
 func RegisterDefaults(r *Registry) {
 	r.Register("{{days}}", handleDays)
 	r.Register("{{working_time}}", handleWorkingTime)
+
+	r.Register("{{start_process}}", func(f *excelize.File, sheet string, row, col int, value string) error {
+		// TODO nee create new handler function witch will working with completing employees data
+		return nil
+	})
 }
 
 func handleDays(f *excelize.File, sheet string, row, col int, _ string) error {

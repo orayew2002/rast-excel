@@ -40,8 +40,10 @@ func (r *Registry) Process(f *excelize.File, sheet string, row, col int, value s
 			if err := e.handler(f, sheet, row, col, value); err != nil {
 				return false, err
 			}
+
 			return true, nil
 		}
 	}
+
 	return false, nil
 }
