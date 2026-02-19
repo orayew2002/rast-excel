@@ -30,8 +30,6 @@ func RegisterEmployeeHandler(r *Registry, employees []domain.Employee) {
 
 func handleDays(f *excelize.File, sheet string, row, col int, _ string) error {
 	days := currentMonthDays()
-	fmt.Println("current month days =", days)
-
 	if err := f.InsertCols(sheet, excel.IndexToColumn(col+1), days-1); err != nil {
 		return fmt.Errorf("insert cols: %w", err)
 	}
