@@ -2,10 +2,12 @@ module github.com/orayew2002/rast-excel
 
 go 1.25.7
 
-require github.com/xuri/excelize/v2 v2.10.0
+require (
+	github.com/bxcodec/faker/v4 v4.0.0-beta.3
+	github.com/xuri/excelize/v2 v2.10.0
+)
 
 require (
-	github.com/bxcodec/faker/v4 v4.0.0-beta.3 // indirect
 	github.com/richardlehane/mscfb v1.0.4 // indirect
 	github.com/richardlehane/msoleps v1.0.4 // indirect
 	github.com/tiendc/go-deepcopy v1.7.1 // indirect
