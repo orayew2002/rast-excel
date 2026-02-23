@@ -19,37 +19,20 @@ func New(registry *template.Registry) *Processor {
 	return &Processor{registry: registry}
 }
 
-// ProcessFile opens the input Excel file, processes all sheets, saves to output,
-// and returns the resulting file as bytes.
-func (p *Processor) ProcessFile(input, output string) ([]byte, error) {
+// ProcessFile opens an Excel file from disk, processes all sheets,
+// and returns the result as bytes. It does NOT save to disk.
+func (p *Processor) ProcessFile(input string) ([]byte, error) {
 	f, err := excelize.OpenFile(input)
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", input, err)
 	}
 	defer f.Close()
 
-	for _, sheet := range f.GetSheetList() {
-		if err := p.processSheet(f, sheet); err != nil {
-			return nil, fmt.Errorf("sheet %q: %w", sheet, err)
-		}
-	}
-
-	buf, err := f.WriteToBuffer()
-	if err != nil {
-		return nil, fmt.Errorf("write to buffer: %w", err)
-	}
-
-	data := buf.Bytes()
-
-	if err := f.SaveAs(output); err != nil {
-		return nil, fmt.Errorf("save %s: %w", output, err)
-	}
-
-	return data, nil
+	return p.process(f)
 }
 
-// ProcessBytes reads an Excel file from raw bytes, processes all sheets,
-// and returns the resulting file as bytes.
+// ProcessBytes opens an Excel file from raw bytes, processes all sheets,
+// and returns the result as bytes.
 func (p *Processor) ProcessBytes(data []byte) ([]byte, error) {
 	f, err := excelize.OpenReader(bytes.NewReader(data))
 	if err != nil {
@@ -57,6 +40,11 @@ func (p *Processor) ProcessBytes(data []byte) ([]byte, error) {
 	}
 	defer f.Close()
 
+	return p.process(f)
+}
+
+// process runs all sheet handlers and serializes the result to bytes.
+func (p *Processor) process(f *excelize.File) ([]byte, error) {
 	for _, sheet := range f.GetSheetList() {
 		if err := p.processSheet(f, sheet); err != nil {
 			return nil, fmt.Errorf("sheet %q: %w", sheet, err)
@@ -85,8 +73,7 @@ func (p *Processor) processSheet(f *excelize.File, sheet string) error {
 			}
 
 			if _, err := p.registry.Process(f, sheet, row, col, value); err != nil {
-				cell := excel.CellName(row, col)
-				return fmt.Errorf("cell %s: %w", cell, err)
+				return fmt.Errorf("cell %s: %w", excel.CellName(row, col), err)
 			}
 		}
 	}
