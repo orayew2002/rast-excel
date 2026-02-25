@@ -14,6 +14,7 @@ Fill a template with real employee data, expand attendance columns for the curre
 - [Providing Your Own Employees](#providing-your-own-employees)
 - [Custom Formula Keys](#custom-formula-keys)
 - [Simple Value Replacement](#simple-value-replacement)
+- [Attendance Marks List](#attendance-marks-list)
 - [Processing API](#processing-api)
 - [Package Overview](#package-overview)
 - [Project Structure](#project-structure)
@@ -242,21 +243,48 @@ Set `FormulaFn` to `nil` for a style-only key.
 
 ## Simple Value Replacement
 
-`RegisterReplaceHandler` registers a handler that replaces every occurrence of a key inside a cell with a fixed string value. The existing cell style is preserved.
+Two APIs are available depending on how many keys a single template cell contains.
+
+### Single key per cell — `RegisterReplaceHandler`
+
+A convenience shorthand when each placeholder lives in its own cell.
 
 ```go
-template.RegisterReplaceHandler(registry, key, val string)
+template.RegisterReplaceHandler(r *Registry, key, val string)
 ```
 
-| Parameter | Description |
-|-----------|-------------|
-| `r` | The `*Registry` to register the handler into |
-| `key` | The placeholder string in the template, e.g. `"{{month}}"` |
-| `val` | The replacement value written into the cell |
+```go
+template.RegisterReplaceHandler(registry, "{{month}}", "February")
+template.RegisterReplaceHandler(registry, "{{year}}", "2026")
+```
 
-### Usage
+### Multiple keys in one cell — `NewReplaceHandler`
 
-Register it in step 1 (structural pass) together with the other built-in handlers:
+When one cell contains several placeholders (e.g. `"{{start_year}} ý. {{month_tk}}"`)
+use `NewReplaceHandler` so all keys are replaced in a **single pass**.
+
+The registry stops at the first matching handler per cell. `NewReplaceHandler` works
+around this by sharing one handler across all its keys: whichever key matches first
+causes **all** pairs to be applied to that cell.
+
+```go
+rh := template.NewReplaceHandler()
+rh.Add("{{start_year}}", "2026")
+rh.Add("{{month_tk}}",   "Февраль")
+rh.Register(registry)
+```
+
+`Add` returns the handler so calls can be chained:
+
+```go
+template.NewReplaceHandler().
+    Add("{{start_year}}", "2026").
+    Add("{{month_tk}}",   "Февраль").
+    Add("{{department}}", "Engineering").
+    Register(registry)
+```
+
+### Full step 1 example
 
 ```go
 func step1(input string, employees []domain.Employee) ([]byte, error) {
@@ -264,27 +292,93 @@ func step1(input string, employees []domain.Employee) ([]byte, error) {
     template.RegisterDefaults(registry)
     template.RegisterEmployeeHandler(registry, employees)
 
-    // replace {{month}} with the current month name
-    template.RegisterReplaceHandler(registry, "{{month}}", "February")
-
-    // replace {{year}} with the current year
-    template.RegisterReplaceHandler(registry, "{{year}}", "2026")
-
-    // replace {{department}} with a department name
+    // cells that hold a single key
     template.RegisterReplaceHandler(registry, "{{department}}", "Engineering")
+
+    // cells that hold multiple keys at once
+    template.NewReplaceHandler().
+        Add("{{start_year}}", "2026").
+        Add("{{month_tk}}",   "Февраль").
+        Register(registry)
 
     return processor.New(registry).ProcessFile(input)
 }
 ```
 
-Place the key anywhere in your `.xlsx` template cell. A cell may contain surrounding text — only the key substring is replaced, the rest of the text is kept:
+### Behaviour notes
+
+- Only the key substring is replaced; surrounding text is kept:
+  ```
+  Template cell:  "{{start_year}} ý. {{month_tk}}"
+  Result cell:    "2026 ý. Февраль"
+  ```
+- The existing cell style is always preserved.
+- Keys registered with `RegisterReplaceHandler` are independent — each becomes its own single-pair handler. Use `NewReplaceHandler` whenever two or more keys can appear together in one cell.
+
+---
+
+## Attendance Marks List
+
+`RegisterMarksHandler` expands a `{{marks_list}}` placeholder into a full legend
+of attendance mark symbols — one row per entry, with the description in the name
+column and the abbreviation in a configurable key column.
+
+### `domain.Mark`
+
+```go
+type Mark struct {
+    Name string // descriptive label (e.g. "Dynç alyş we baýramçylyk günler")
+    Key  string // abbreviation     (e.g. "B")
+}
+```
+
+### `RegisterMarksHandler`
+
+```go
+template.RegisterMarksHandler(r *Registry, keyColOffset int, marks []domain.Mark)
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `r` | The `*Registry` to register the handler into |
+| `keyColOffset` | How many columns to the right of `{{marks_list}}` the `Key` abbreviation is written. Use `1` for the immediately adjacent column. |
+| `marks` | Ordered slice of marks to write |
+
+### How it works
+
+1. Finds the cell containing `{{marks_list}}` at `(row, col)`.
+2. Copies the name-cell style from `(row, col)` and the key-cell style from `(row, col+keyColOffset)`.
+3. Removes the template row and inserts one new row per mark.
+4. Writes `mark.Name` at `col` and `mark.Key` at `col+keyColOffset` for each mark, applying the copied styles.
+
+### Template setup
+
+Place `{{marks_list}}` in the name column and leave the key column at the desired offset with any style you want copied:
 
 ```
-Template cell:  "Report for {{month}} {{year}}"
-Result cell:    "Report for February 2026"
+| col A (name column)   | col B (key column) |
+|-----------------------|--------------------|
+| {{marks_list}}        |                    |  ← template row (keyColOffset=1)
 ```
 
-Keys are matched by substring, so `RegisterReplaceHandler` can be used anywhere `RegisterDefaults` is used — in step 1, step 2, or both.
+### Usage
+
+```go
+import "github.com/orayew2002/rast-excel/domain"
+
+marks := []domain.Mark{
+    {Name: "Dynç alyş we baýramçylyk günler", Key: "B"},
+    {Name: "Kanuna laýyk işe gelmezlik",      Key: "C"},
+    {Name: "Gulluk iş saparlary",             Key: "W"},
+    {Name: "Nobatdaky we goşmaça rugsatlar",  Key: "O"},
+    {Name: "Işe ýarawsyzlyk (kesel, karantin we ş.m.)", Key: "Y"},
+    // ...
+}
+
+template.RegisterMarksHandler(registry, 1, marks)
+```
+
+The marks are written in the same order they are provided in the slice.
 
 ---
 
@@ -331,8 +425,8 @@ attStart := template.AttendanceStartCol(0)
 
 | Package | Responsibility |
 |---------|---------------|
-| `domain` | `Employee` struct, `GenerateEmployees`, `KeyMap` for text replacements |
-| `template` | Handler registration, `FormulaKey`, formula builders (`CountIFFormula`, `SumNumFormula`, `CountNumFormula`), `RegisterReplaceHandler`, `StyleManager` |
+| `domain` | `Employee` struct, `Mark` struct, `GenerateEmployees`, `KeyMap` for text replacements |
+| `template` | Handler registration, `FormulaKey`, formula builders (`CountIFFormula`, `SumNumFormula`, `CountNumFormula`), `ReplaceHandler`, `RegisterReplaceHandler`, `StyleManager` |
 | `processor` | `Processor` — iterates all cells in all sheets and dispatches to the registry |
 | `excel` | `CellName(row, col)`, `IndexToColumn(n)` — coordinate helpers |
 

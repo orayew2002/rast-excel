@@ -289,33 +289,72 @@ func handleDays(f *excelize.File, sheet string, row, col int, _ string) error {
 	return nil
 }
 
-// ---------- RegisterReplaceHandler ----------
+// ---------- ReplaceHandler ----------
 
-// RegisterReplaceHandler registers a handler that replaces every occurrence of
-// key inside a cell's value with val, preserving the existing cell style.
+// ReplaceHandler accumulates key→value pairs and registers a single shared
+// handler for all of them. Because the registry stops at the first matched
+// handler per cell, sharing one handler ensures ALL pairs are replaced in one
+// pass — even when a cell contains several keys at once (e.g. "{{year}} {{month}}").
 //
-// Example:
+// Usage:
 //
-//	template.RegisterReplaceHandler(registry, "{{month}}", "February")
+//	rh := template.NewReplaceHandler()
+//	rh.Add("{{start_year}}", "2026")
+//	rh.Add("{{month_tk}}", "Февраль")
+//	rh.Register(registry)
+type ReplaceHandler struct {
+	pairs []replacePair
+}
+
+type replacePair struct{ key, val string }
+
+// NewReplaceHandler creates an empty ReplaceHandler.
+func NewReplaceHandler() *ReplaceHandler {
+	return &ReplaceHandler{}
+}
+
+// Add appends a key→val pair. Returns h so calls can be chained.
+func (h *ReplaceHandler) Add(key, val string) *ReplaceHandler {
+	h.pairs = append(h.pairs, replacePair{key, val})
+	return h
+}
+
+// Register registers h into r for every key added via Add.
+// All keys share the same underlying handler, so whichever key triggers first
+// causes all pairs to be replaced in the cell.
+func (h *ReplaceHandler) Register(r *Registry) {
+	for _, p := range h.pairs {
+		r.Register(p.key, h.apply)
+	}
+}
+
+func (h *ReplaceHandler) apply(f *excelize.File, sheet string, row, col int, value string) error {
+	cell := excel.CellName(row, col)
+
+	styleID, _ := f.GetCellStyle(sheet, cell)
+
+	replaced := value
+	for _, p := range h.pairs {
+		replaced = strings.ReplaceAll(replaced, p.key, p.val)
+	}
+
+	if err := f.SetCellStr(sheet, cell, replaced); err != nil {
+		return fmt.Errorf("replace handler: %w", err)
+	}
+
+	if styleID != 0 {
+		if err := f.SetCellStyle(sheet, cell, cell, styleID); err != nil {
+			return fmt.Errorf("restore style: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// RegisterReplaceHandler is a convenience wrapper for a single key→val pair.
+// For cells that contain multiple keys, use NewReplaceHandler instead.
 func RegisterReplaceHandler(r *Registry, key, val string) {
-	r.Register(key, func(f *excelize.File, sheet string, row, col int, value string) error {
-		cell := excel.CellName(row, col)
-
-		styleID, _ := f.GetCellStyle(sheet, cell)
-		replaced := strings.ReplaceAll(value, key, val)
-
-		if err := f.SetCellStr(sheet, cell, replaced); err != nil {
-			return fmt.Errorf("set %s: %w", key, err)
-		}
-
-		if styleID != 0 {
-			if err := f.SetCellStyle(sheet, cell, cell, styleID); err != nil {
-				return fmt.Errorf("restore style %s: %w", key, err)
-			}
-		}
-
-		return nil
-	})
+	NewReplaceHandler().Add(key, val).Register(r)
 }
 
 // ---------- {{working_time}} ----------
@@ -333,6 +372,66 @@ func handleWorkingTime(f *excelize.File, sheet string, row, col int, value strin
 	if styleID != 0 {
 		if err := f.SetCellStyle(sheet, cell, cell, styleID); err != nil {
 			return fmt.Errorf("restore style: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// ---------- RegisterMarksHandler ----------
+
+// RegisterMarksHandler registers a handler for {{marks_list}}.
+//
+// When the processor finds a cell containing {{marks_list}}, it:
+//  1. Copies the name-cell style from (row, col) — the placeholder cell.
+//  2. Copies the key-cell style from (row, col+keyColOffset) — the adjacent
+//     abbreviation column. Set keyColOffset=1 for the next column.
+//  3. Removes the template row and inserts one row per mark.
+//  4. Writes mark.Name at col and mark.Key at col+keyColOffset, each with
+//     its corresponding copied style.
+//
+// Example:
+//
+//	template.RegisterMarksHandler(registry, 1, []domain.Mark{
+//	    {Name: "Dynç alyş we baýramçylyk günler", Key: "B"},
+//	    {Name: "Kanuna laýyk işe gelmezlik",      Key: "C"},
+//	})
+func RegisterMarksHandler(r *Registry, keyColOffset int, marks []domain.Mark) {
+	r.Register("{{marks_list}}", func(f *excelize.File, sheet string, row, col int, _ string) error {
+		return writeMarks(f, sheet, row, col, keyColOffset, marks)
+	})
+}
+
+func writeMarks(f *excelize.File, sheet string, row, col, keyColOffset int, marks []domain.Mark) error {
+	// Capture styles from the template row before it is removed.
+	nameStyleID, _ := f.GetCellStyle(sheet, excel.CellName(row, col))
+	keyStyleID, _ := f.GetCellStyle(sheet, excel.CellName(row, col+keyColOffset))
+
+	if err := f.RemoveRow(sheet, row+1); err != nil {
+		return fmt.Errorf("marks: remove template row: %w", err)
+	}
+
+	if err := f.InsertRows(sheet, row+1, len(marks)); err != nil {
+		return fmt.Errorf("marks: insert rows: %w", err)
+	}
+
+	for i, m := range marks {
+		r := row + i
+		nameCell := excel.CellName(r, col)
+		keyCell := excel.CellName(r, col+keyColOffset)
+
+		if err := f.SetCellStr(sheet, nameCell, m.Name); err != nil {
+			return fmt.Errorf("marks[%d] name: %w", i, err)
+		}
+		if err := f.SetCellStyle(sheet, nameCell, nameCell, nameStyleID); err != nil {
+			return fmt.Errorf("marks[%d] name style: %w", i, err)
+		}
+
+		if err := f.SetCellStr(sheet, keyCell, m.Key); err != nil {
+			return fmt.Errorf("marks[%d] key: %w", i, err)
+		}
+		if err := f.SetCellStyle(sheet, keyCell, keyCell, keyStyleID); err != nil {
+			return fmt.Errorf("marks[%d] key style: %w", i, err)
 		}
 	}
 

@@ -16,6 +16,14 @@ type Employee struct {
 	Attendance  []string
 }
 
+// Mark represents a single attendance legend entry.
+// Name is the label shown in the name column; Key is the abbreviation shown
+// in the key column (e.g. "B", "W", "IW").
+type Mark struct {
+	Name string
+	Key  string
+}
+
 var jobPositions = []string{
 	"Software Engineer",
 	"Backend Developer",
