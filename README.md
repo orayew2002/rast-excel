@@ -13,6 +13,7 @@ Fill a template with real employee data, expand attendance columns for the curre
 - [Template Placeholders](#template-placeholders)
 - [Providing Your Own Employees](#providing-your-own-employees)
 - [Custom Formula Keys](#custom-formula-keys)
+- [Simple Value Replacement](#simple-value-replacement)
 - [Processing API](#processing-api)
 - [Package Overview](#package-overview)
 - [Project Structure](#project-structure)
@@ -136,6 +137,7 @@ Place these keys inside cells of your `.xlsx` template file.
 | `{{days}}` | Expands the attendance header to cover every day of the current month. Merges header rows and sets column widths automatically. |
 | `{{working_time}}` | Replaced with the localized working-time label defined in `domain.KeyMap`. |
 | `{{start_process}}` | Marks the row where employee data is inserted. Writes one row per employee: fixed columns (ID, full name, table ID, job position) followed by daily attendance values. |
+| any custom key | Any placeholder registered via `RegisterReplaceHandler` — replaced in-place with a fixed string, cell style preserved. |
 
 ### Step 2 — Formula Keys
 
@@ -238,6 +240,54 @@ Set `FormulaFn` to `nil` for a style-only key.
 
 ---
 
+## Simple Value Replacement
+
+`RegisterReplaceHandler` registers a handler that replaces every occurrence of a key inside a cell with a fixed string value. The existing cell style is preserved.
+
+```go
+template.RegisterReplaceHandler(registry, key, val string)
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `r` | The `*Registry` to register the handler into |
+| `key` | The placeholder string in the template, e.g. `"{{month}}"` |
+| `val` | The replacement value written into the cell |
+
+### Usage
+
+Register it in step 1 (structural pass) together with the other built-in handlers:
+
+```go
+func step1(input string, employees []domain.Employee) ([]byte, error) {
+    registry := template.New()
+    template.RegisterDefaults(registry)
+    template.RegisterEmployeeHandler(registry, employees)
+
+    // replace {{month}} with the current month name
+    template.RegisterReplaceHandler(registry, "{{month}}", "February")
+
+    // replace {{year}} with the current year
+    template.RegisterReplaceHandler(registry, "{{year}}", "2026")
+
+    // replace {{department}} with a department name
+    template.RegisterReplaceHandler(registry, "{{department}}", "Engineering")
+
+    return processor.New(registry).ProcessFile(input)
+}
+```
+
+Place the key anywhere in your `.xlsx` template cell. A cell may contain surrounding text — only the key substring is replaced, the rest of the text is kept:
+
+```
+Template cell:  "Report for {{month}} {{year}}"
+Result cell:    "Report for February 2026"
+```
+
+Keys are matched by substring, so `RegisterReplaceHandler` can be used anywhere `RegisterDefaults` is used — in step 1, step 2, or both.
+
+---
+
 ## Processing API
 
 ### `processor.New(registry).ProcessFile(path string) ([]byte, error)`
@@ -282,7 +332,7 @@ attStart := template.AttendanceStartCol(0)
 | Package | Responsibility |
 |---------|---------------|
 | `domain` | `Employee` struct, `GenerateEmployees`, `KeyMap` for text replacements |
-| `template` | Handler registration, `FormulaKey`, formula builders (`CountIFFormula`, `SumNumFormula`, `CountNumFormula`), `StyleManager` |
+| `template` | Handler registration, `FormulaKey`, formula builders (`CountIFFormula`, `SumNumFormula`, `CountNumFormula`), `RegisterReplaceHandler`, `StyleManager` |
 | `processor` | `Processor` — iterates all cells in all sheets and dispatches to the registry |
 | `excel` | `CellName(row, col)`, `IndexToColumn(n)` — coordinate helpers |
 

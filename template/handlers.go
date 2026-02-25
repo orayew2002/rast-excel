@@ -289,6 +289,35 @@ func handleDays(f *excelize.File, sheet string, row, col int, _ string) error {
 	return nil
 }
 
+// ---------- RegisterReplaceHandler ----------
+
+// RegisterReplaceHandler registers a handler that replaces every occurrence of
+// key inside a cell's value with val, preserving the existing cell style.
+//
+// Example:
+//
+//	template.RegisterReplaceHandler(registry, "{{month}}", "February")
+func RegisterReplaceHandler(r *Registry, key, val string) {
+	r.Register(key, func(f *excelize.File, sheet string, row, col int, value string) error {
+		cell := excel.CellName(row, col)
+
+		styleID, _ := f.GetCellStyle(sheet, cell)
+		replaced := strings.ReplaceAll(value, key, val)
+
+		if err := f.SetCellStr(sheet, cell, replaced); err != nil {
+			return fmt.Errorf("set %s: %w", key, err)
+		}
+
+		if styleID != 0 {
+			if err := f.SetCellStyle(sheet, cell, cell, styleID); err != nil {
+				return fmt.Errorf("restore style %s: %w", key, err)
+			}
+		}
+
+		return nil
+	})
+}
+
 // ---------- {{working_time}} ----------
 
 func handleWorkingTime(f *excelize.File, sheet string, row, col int, value string) error {
