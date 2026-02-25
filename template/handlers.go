@@ -260,8 +260,17 @@ func handleDays(f *excelize.File, sheet string, row, col int, _ string) error {
 	for _, headerRow := range []int{0, 1} {
 		topLeft := excel.CellName(headerRow, col)
 		bottomRight := excel.CellName(headerRow, col+days-1)
+
+		headerStyleID, _ := f.GetCellStyle(sheet, topLeft)
+
 		if err := f.MergeCell(sheet, topLeft, bottomRight); err != nil {
 			return fmt.Errorf("merge row %d: %w", headerRow, err)
+		}
+
+		if headerStyleID != 0 {
+			if err := f.SetCellStyle(sheet, topLeft, bottomRight, headerStyleID); err != nil {
+				return fmt.Errorf("header style row %d: %w", headerRow, err)
+			}
 		}
 	}
 
