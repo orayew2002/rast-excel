@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/orayew2002/rast-excel/domain"
 	"github.com/orayew2002/rast-excel/excel"
@@ -406,7 +407,29 @@ func RegisterMarksHandler(r *Registry, marks []domain.Mark) {
 	})
 }
 
+// numericKey reports whether every rune in key is a digit (e.g. "8", "12").
+func numericKey(key string) bool {
+	if key == "" {
+		return false
+	}
+	for _, r := range key {
+		if !unicode.IsDigit(r) {
+			return false
+		}
+	}
+	return true
+}
+
 func writeMarks(f *excelize.File, sheet string, row, col int, marks []domain.Mark) error {
+	// Skip marks whose Key is a plain number (e.g. "8" for worked hours).
+	filtered := marks[:0:0]
+	for _, m := range marks {
+		if !numericKey(m.Key) {
+			filtered = append(filtered, m)
+		}
+	}
+	marks = filtered
+
 	placeholder := excel.CellName(row, col)
 
 	// Capture style before the row is removed.
