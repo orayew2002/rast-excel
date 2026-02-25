@@ -39,12 +39,32 @@ func main() {
 	fmt.Println("done:", *output)
 }
 
+var marks = []domain.Mark{
+	{Name: "Dynç alyş we baýramçylyk günler", Key: "B"},
+	{Name: "Kanuna laýyk işe gelmezlik", Key: "C"},
+	{Name: "Gulluk iş saparlary", Key: "W"},
+	{Name: "Nobatdaky we goşmaça rugsatlar", Key: "O"},
+	{Name: "Işe ýarawsyzlyk (kesel, karantin we ş.m.)", Key: "Y"},
+	{Name: "Gowrelilik sebäpli rugsat", Key: "O"},
+	{Name: "Emdiryän eneleriň ýeňillikli sagatlary", Key: "I"},
+	{Name: "Saglyga zyýanly önümçilikde işleýän işleriň ýeňillikli sagatlary", Key: "ÝS"},
+	{Name: "Iş wagtyndan daşary edilen işiň sagatlary", Key: "IWI"},
+	{Name: "Bütin smena boýunça işsiz durmaklyk", Key: "ID"},
+	{Name: "Smeniň içindäki işsiz durmaklyk", Key: "IID"},
+	{Name: "Sebäpsiz işden galmak", Key: "S"},
+	{Name: "Işe gijä galmak we işden wagtyndan öň gitmek", Key: "SIG"},
+	{Name: "Kärhanañ çäginden daşary gulluk tabşyryklaryny ýerine ýetirmek", Key: "ÇDG"},
+	{Name: "Administrasiýañ rugsady boýunça işe gelmezlik", Key: "AR"},
+}
+
 func step1(input string) ([]byte, error) {
 	registry := template.New()
 	template.RegisterDefaults(registry)
 
 	employees := domain.GenerateEmployees(employeeCount)
 	template.RegisterEmployeeHandler(registry, employees)
+
+	template.RegisterMarksHandler(registry, marks)
 
 	return processor.New(registry).ProcessFile(input)
 }

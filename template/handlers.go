@@ -382,56 +382,101 @@ func handleWorkingTime(f *excelize.File, sheet string, row, col int, value strin
 
 // RegisterMarksHandler registers a handler for {{marks_list}}.
 //
-// When the processor finds a cell containing {{marks_list}}, it:
-//  1. Copies the name-cell style from (row, col) — the placeholder cell.
-//  2. Copies the key-cell style from (row, col+keyColOffset) — the adjacent
-//     abbreviation column. Set keyColOffset=1 for the next column.
+// The template cell containing {{marks_list}} must be a merged cell that
+// spans the full width of the marks list (e.g. A1:E1). The handler:
+//  1. Detects the merge range of the placeholder cell automatically.
+//  2. Copies the cell style from the placeholder.
 //  3. Removes the template row and inserts one row per mark.
-//  4. Writes mark.Name at col and mark.Key at col+keyColOffset, each with
-//     its corresponding copied style.
+//  4. For each mark: re-applies the same merge, writes the mark content
+//     into the merged cell with the copied style.
+//
+// The underscore separator between Name and Key is computed dynamically so
+// that every row has the same total rune width — the Key always appears at
+// the same right-edge position regardless of how long the Name is.
 //
 // Example:
 //
-//	template.RegisterMarksHandler(registry, 1, []domain.Mark{
+//	template.RegisterMarksHandler(registry, []domain.Mark{
 //	    {Name: "Dynç alyş we baýramçylyk günler", Key: "B"},
 //	    {Name: "Kanuna laýyk işe gelmezlik",      Key: "C"},
 //	})
-func RegisterMarksHandler(r *Registry, keyColOffset int, marks []domain.Mark) {
+func RegisterMarksHandler(r *Registry, marks []domain.Mark) {
 	r.Register("{{marks_list}}", func(f *excelize.File, sheet string, row, col int, _ string) error {
-		return writeMarks(f, sheet, row, col, keyColOffset, marks)
+		return writeMarks(f, sheet, row, col, marks)
 	})
 }
 
-func writeMarks(f *excelize.File, sheet string, row, col, keyColOffset int, marks []domain.Mark) error {
-	// Capture styles from the template row before it is removed.
-	nameStyleID, _ := f.GetCellStyle(sheet, excel.CellName(row, col))
-	keyStyleID, _ := f.GetCellStyle(sheet, excel.CellName(row, col+keyColOffset))
+func writeMarks(f *excelize.File, sheet string, row, col int, marks []domain.Mark) error {
+	placeholder := excel.CellName(row, col)
+
+	// Capture style before the row is removed.
+	styleID, _ := f.GetCellStyle(sheet, placeholder)
+
+	// Detect the merge range of the placeholder cell.
+	// mergeEndCol stays at col when the cell is not merged.
+	mergeEndCol := col
+	if merges, err := f.GetMergeCells(sheet); err == nil {
+		for _, mc := range merges {
+			if mc.GetStartAxis() == placeholder {
+				if endCol, _, err := excelize.CellNameToCoordinates(mc.GetEndAxis()); err == nil {
+					mergeEndCol = endCol - 1 // excelize returns 1-based; convert to 0-based
+				}
+				break
+			}
+		}
+	}
 
 	if err := f.RemoveRow(sheet, row+1); err != nil {
 		return fmt.Errorf("marks: remove template row: %w", err)
+	}
+
+	// Excel templates sometimes contain phantom row elements near R=1048576
+	// (an artifact of normal editing). InsertRows fails with ErrMaxRows when
+	// any such row's index + n would exceed the limit. Sweeping from the bottom
+	// with RemoveRow (offset=-1) is always safe: newRow = R-1 never overflows.
+	if err := removePhantomRows(f, sheet, len(marks)); err != nil {
+		return fmt.Errorf("marks: clean phantom rows: %w", err)
 	}
 
 	if err := f.InsertRows(sheet, row+1, len(marks)); err != nil {
 		return fmt.Errorf("marks: insert rows: %w", err)
 	}
 
+	// Compute target rune-width so every row's Name+pad+Key has identical length.
+	// This keeps the Key abbreviation right-aligned at the same position for all marks.
+	const minPad = 4
+	targetWidth := 0
+	for _, m := range marks {
+		w := len([]rune(m.Name)) + len([]rune(m.Key))
+		if w > targetWidth {
+			targetWidth = w
+		}
+	}
+	targetWidth += minPad
+
 	for i, m := range marks {
 		r := row + i
-		nameCell := excel.CellName(r, col)
-		keyCell := excel.CellName(r, col+keyColOffset)
+		startCell := excel.CellName(r, col)
+		endCell := excel.CellName(r, mergeEndCol)
 
-		if err := f.SetCellStr(sheet, nameCell, m.Name); err != nil {
-			return fmt.Errorf("marks[%d] name: %w", i, err)
-		}
-		if err := f.SetCellStyle(sheet, nameCell, nameCell, nameStyleID); err != nil {
-			return fmt.Errorf("marks[%d] name style: %w", i, err)
+		// Re-apply the merge for this row.
+		if mergeEndCol > col {
+			if err := f.MergeCell(sheet, startCell, endCell); err != nil {
+				return fmt.Errorf("marks[%d] merge: %w", i, err)
+			}
 		}
 
-		if err := f.SetCellStr(sheet, keyCell, m.Key); err != nil {
-			return fmt.Errorf("marks[%d] key: %w", i, err)
+		padLen := targetWidth - len([]rune(m.Name)) - len([]rune(m.Key))
+		if padLen < 1 {
+			padLen = 1
 		}
-		if err := f.SetCellStyle(sheet, keyCell, keyCell, keyStyleID); err != nil {
-			return fmt.Errorf("marks[%d] key style: %w", i, err)
+		content := m.Name + strings.Repeat("_", padLen) + m.Key
+		if err := f.SetCellStr(sheet, startCell, content); err != nil {
+			return fmt.Errorf("marks[%d] value: %w", i, err)
+		}
+
+		if err := f.SetCellStyle(sheet, startCell, endCell, styleID); err != nil {
+			return fmt.Errorf("marks[%d] style: %w", i, err)
 		}
 	}
 
@@ -439,6 +484,21 @@ func writeMarks(f *excelize.File, sheet string, row, col, keyColOffset int, mark
 }
 
 // ---------- helpers ----------
+
+// removePhantomRows sweeps the last n rows of the sheet using RemoveRow.
+// RemoveRow uses offset=-1, so newRow = R-1 which can never exceed TotalRows —
+// it is always safe. This clears any phantom row elements that Excel leaves near
+// R=1048576 as editing artifacts, which would otherwise cause InsertRows to
+// return ErrMaxRows when n rows are inserted anywhere in the sheet.
+func removePhantomRows(f *excelize.File, sheet string, n int) error {
+	const totalRows = 1048576
+	for r := totalRows; r > totalRows-n; r-- {
+		if err := f.RemoveRow(sheet, r); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 func currentMonthDays() int {
 	now := time.Now().Local()

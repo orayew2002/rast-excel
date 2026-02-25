@@ -335,36 +335,40 @@ type Mark struct {
 ### `RegisterMarksHandler`
 
 ```go
-template.RegisterMarksHandler(r *Registry, keyColOffset int, marks []domain.Mark)
+template.RegisterMarksHandler(r *Registry, sep string, marks []domain.Mark)
 ```
 
 | Parameter | Description |
 |-----------|-------------|
 | `r` | The `*Registry` to register the handler into |
-| `keyColOffset` | How many columns to the right of `{{marks_list}}` the `Key` abbreviation is written. Use `1` for the immediately adjacent column. |
+| `sep` | Separator string placed between `Name` and `Key` inside the merged cell, e.g. `strings.Repeat("_", 48)` |
 | `marks` | Ordered slice of marks to write |
 
 ### How it works
 
 1. Finds the cell containing `{{marks_list}}` at `(row, col)`.
-2. Copies the name-cell style from `(row, col)` and the key-cell style from `(row, col+keyColOffset)`.
-3. Removes the template row and inserts one new row per mark.
-4. Writes `mark.Name` at `col` and `mark.Key` at `col+keyColOffset` for each mark, applying the copied styles.
+2. **Auto-detects the merge range** of that cell (e.g. `A5:E5`) — no configuration needed.
+3. Copies the cell style from the placeholder.
+4. Removes the template row and inserts one new row per mark.
+5. For each mark: re-applies the same merge, writes `Name + sep + Key` into the merged cell, and applies the copied style across the full merge range.
 
 ### Template setup
 
-Place `{{marks_list}}` in the name column and leave the key column at the desired offset with any style you want copied:
+Place `{{marks_list}}` in a **merged cell** that spans the full width you want for the marks list. Style it (font, borders, alignment) exactly as you want the output to look — the handler copies it directly.
 
 ```
-| col A (name column)   | col B (key column) |
-|-----------------------|--------------------|
-| {{marks_list}}        |                    |  ← template row (keyColOffset=1)
+| col A ←————— merged across 5 columns —————→ col E |
+|---------------------------------------------------|
+|  {{marks_list}}                                   |  ← template row
 ```
 
 ### Usage
 
 ```go
-import "github.com/orayew2002/rast-excel/domain"
+import (
+    "strings"
+    "github.com/orayew2002/rast-excel/domain"
+)
 
 marks := []domain.Mark{
     {Name: "Dynç alyş we baýramçylyk günler", Key: "B"},
@@ -375,7 +379,12 @@ marks := []domain.Mark{
     // ...
 }
 
-template.RegisterMarksHandler(registry, 1, marks)
+template.RegisterMarksHandler(registry, strings.Repeat("_", 48), marks)
+```
+
+Result for each row:
+```
+Dynç alyş we baýramçylyk günler________________________________________________B
 ```
 
 The marks are written in the same order they are provided in the slice.
