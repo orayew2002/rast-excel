@@ -159,12 +159,16 @@ type combFormulaHandler struct {
 	employeeCount int
 	attStart      int // 0-based column where attendance data begins
 	keys          []FormulaKey
-	sm            *StyleManager // lazily initialized on first handle call
+	sm            *StyleManager        // lazily initialized on first handle call
+	removedRows   map[string]struct{}  // tracks formula rows already removed
 }
 
 func (h *combFormulaHandler) handle(f *excelize.File, sheet string, row, col int, value string) error {
 	if h.sm == nil {
 		h.sm = NewStyleManager(f)
+	}
+	if h.removedRows == nil {
+		h.removedRows = make(map[string]struct{})
 	}
 
 	centeredStyle, err := h.sm.Centered()
@@ -194,8 +198,18 @@ func (h *combFormulaHandler) handle(f *excelize.File, sheet string, row, col int
 		}
 	}
 
-	// Clear the template placeholder cell.
-	return f.SetCellStr(sheet, excel.CellName(row, col), "")
+	// Remove the template formula row exactly once — multiple keys can live in
+	// the same row (e.g. {{t}}, {{d}}, {{w}}), so the handler is called once per
+	// cell. Tracking ensures RemoveRow is called only on the first hit.
+	key := fmt.Sprintf("%s:%d", sheet, row)
+	if _, done := h.removedRows[key]; !done {
+		h.removedRows[key] = struct{}{}
+		if err := f.RemoveRow(sheet, row+1); err != nil {
+			return fmt.Errorf("remove formula row: %w", err)
+		}
+	}
+
+	return nil
 }
 
 // buildFormula collects formulas from all keys found in value, returning the
