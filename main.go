@@ -38,6 +38,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Step 4: apply borders to &1…&1 ranges.
+	data, err = step4(data)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "step4: %v\n", err)
+		os.Exit(1)
+	}
+
 	if err := os.WriteFile(*output, data, 0644); err != nil {
 		fmt.Fprintf(os.Stderr, "save: %v\n", err)
 		os.Exit(1)
@@ -79,6 +86,12 @@ func step1(input string) ([]byte, error) {
 func step3(data []byte) ([]byte, error) {
 	registry := template.New()
 	template.RegisterMergeHandler(registry)
+	return processor.New(registry).ProcessBytes(data)
+}
+
+func step4(data []byte) ([]byte, error) {
+	registry := template.New()
+	template.RegisterBorderHandler(registry)
 	return processor.New(registry).ProcessBytes(data)
 }
 

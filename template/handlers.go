@@ -584,6 +584,93 @@ func handleMergeCode(f *excelize.File, sheet string, row, col int, value string)
 	return nil
 }
 
+// ---------- RegisterBorderHandler ----------
+
+// RegisterBorderHandler registers a handler for the &1 marker.
+//
+// Place &1 in exactly two cells of the template:
+//   - the top-left corner of the table you want bordered
+//   - the bottom-right corner of the table
+//
+// The handler strips the marker from both cells and applies a full border
+// (all four sides) to every cell in the rectangle they define, while
+// preserving each cell's existing style (font, alignment, fill, etc.).
+//
+// A single &1 registration supports multiple independent ranges per sheet:
+// after each pair is consumed the handler resets and waits for the next pair.
+func RegisterBorderHandler(r *Registry) {
+	h := &borderHandler{}
+	r.Register("&1", h.handle)
+}
+
+type borderHandler struct {
+	topLeft *[2]int // nil until first &1 is found
+}
+
+func (h *borderHandler) handle(f *excelize.File, sheet string, row, col int, value string) error {
+	cell := excel.CellName(row, col)
+
+	cleaned := strings.ReplaceAll(value, "&1", "")
+	if err := f.SetCellStr(sheet, cell, cleaned); err != nil {
+		return fmt.Errorf("border handler: strip marker at %s: %w", cell, err)
+	}
+
+	if h.topLeft == nil {
+		h.topLeft = &[2]int{row, col}
+		return nil
+	}
+
+	r1, c1 := h.topLeft[0], h.topLeft[1]
+	r2, c2 := row, col
+	h.topLeft = nil // reset for the next pair
+
+	if r1 > r2 {
+		r1, r2 = r2, r1
+	}
+	if c1 > c2 {
+		c1, c2 = c2, c1
+	}
+
+	for r := r1; r <= r2; r++ {
+		for c := c1; c <= c2; c++ {
+			if err := applyBorderToCell(f, sheet, r, c); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// applyBorderToCell reads the cell's current style, adds a full border, and
+// writes the new style back — preserving font, alignment, fill, etc.
+func applyBorderToCell(f *excelize.File, sheet string, row, col int) error {
+	cell := excel.CellName(row, col)
+
+	var style *excelize.Style
+	if styleID, _ := f.GetCellStyle(sheet, cell); styleID != 0 {
+		if s, err := f.GetStyle(styleID); err == nil {
+			style = s
+		}
+	}
+	if style == nil {
+		style = &excelize.Style{}
+	}
+
+	style.Border = defaultBorder()
+
+	newID, err := f.NewStyle(style)
+	if err != nil {
+		return fmt.Errorf("border handler: new style at %s: %w", cell, err)
+	}
+
+	if err := f.SetCellStyle(sheet, cell, cell, newID); err != nil {
+		return fmt.Errorf("border handler: set style at %s: %w", cell, err)
+	}
+
+	return nil
+}
+
 // ---------- helpers ----------
 
 // removePhantomRows sweeps the last n rows of the sheet using RemoveRow.
