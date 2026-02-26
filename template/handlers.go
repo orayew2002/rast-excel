@@ -2,6 +2,7 @@ package template
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -523,6 +524,60 @@ func writeMarks(f *excelize.File, sheet string, row, col int, marks []domain.Mar
 
 		if err := f.SetCellStyle(sheet, startCell, endCell, styleID); err != nil {
 			return fmt.Errorf("marks[%d] style: %w", i, err)
+		}
+	}
+
+	return nil
+}
+
+// ---------- RegisterMergeHandler ----------
+
+var mergeCodePat = regexp.MustCompile(`\[(\d+):(\d+)\]`)
+
+// RegisterMergeHandler registers a handler that detects [extraRows:extraCols] codes
+// embedded in cell values, strips the code, and merges the cell with its neighbours.
+//
+//	[1:0] → merge with 1 row below, no extra cols
+//	[1:1] → merge with 1 row below and 1 col to the right
+//	[0:2] → merge 2 cols to the right (horizontal only)
+//	[0:0] → strip code only, no merge
+//
+// Run this in a separate pass (after all row/col insertions are done) so the
+// row indices are stable.
+func RegisterMergeHandler(r *Registry) {
+	r.Register("[", handleMergeCode)
+}
+
+func handleMergeCode(f *excelize.File, sheet string, row, col int, value string) error {
+	m := mergeCodePat.FindStringSubmatch(value)
+	if m == nil {
+		return nil // "[" present but not a merge code — skip
+	}
+
+	extraRows, _ := strconv.Atoi(m[1])
+	extraCols, _ := strconv.Atoi(m[2])
+
+	cleaned := mergeCodePat.ReplaceAllString(value, "")
+
+	cell := excel.CellName(row, col)
+	styleID, _ := f.GetCellStyle(sheet, cell)
+
+	if err := f.SetCellStr(sheet, cell, cleaned); err != nil {
+		return fmt.Errorf("merge handler: set value: %w", err)
+	}
+
+	if extraRows == 0 && extraCols == 0 {
+		return nil // nothing to merge
+	}
+
+	bottomRight := excel.CellName(row+extraRows, col+extraCols)
+	if err := f.MergeCell(sheet, cell, bottomRight); err != nil {
+		return fmt.Errorf("merge handler: merge: %w", err)
+	}
+
+	if styleID != 0 {
+		if err := f.SetCellStyle(sheet, cell, bottomRight, styleID); err != nil {
+			return fmt.Errorf("merge handler: style: %w", err)
 		}
 	}
 

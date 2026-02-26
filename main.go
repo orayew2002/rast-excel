@@ -31,6 +31,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Step 3: apply [rowSpan:colSpan] merge codes embedded in cell values.
+	data, err = step3(data)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "step3: %v\n", err)
+		os.Exit(1)
+	}
+
 	if err := os.WriteFile(*output, data, 0644); err != nil {
 		fmt.Fprintf(os.Stderr, "save: %v\n", err)
 		os.Exit(1)
@@ -67,6 +74,12 @@ func step1(input string) ([]byte, error) {
 	template.RegisterMarksHandler(registry, marks)
 
 	return processor.New(registry).ProcessFile(input)
+}
+
+func step3(data []byte) ([]byte, error) {
+	registry := template.New()
+	template.RegisterMergeHandler(registry)
+	return processor.New(registry).ProcessBytes(data)
 }
 
 func step2(data []byte) ([]byte, error) {
